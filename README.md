@@ -37,6 +37,11 @@ export BEDROCK_MODEL_ID=<a Converse-capable model or inference profile ID you ha
 
 Without `BEDROCK_MODEL_ID` the digest falls back to a deterministic template.
 
+## Deploy to Render (free, no AWS)
+
+`render.yaml` is a Blueprint: in Render choose New > Blueprint, connect this repo, and deploy. Data is stored in a JSON file on
+Render's ephemeral disk, so it resets on redeploys and the free tier sleeps after inactivity (first request may take ~50s).
+
 ## Deploy to AWS
 
 Architecture: Lambda Function URL (Node 22) -> Streamable HTTP MCP at `/mcp`, DynamoDB for state, Bedrock Converse for digests.

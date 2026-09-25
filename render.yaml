@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: careloop
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/state
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: CARELOOP_TZ
+        value: Asia/Kolkata
