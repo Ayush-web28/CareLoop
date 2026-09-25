@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareLoop – Simulated Alexa+</title>
+<style>
+  :root { --bg:#0f1b2d; --card:#17263d; --ink:#e8eef7; --dim:#8ea3c0; --accent:#3ec6e0; --ok:#4cd68a; --warn:#f5b84b; --bad:#ef6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 24px; border-bottom:1px solid #23344f; display:flex; gap:12px; align-items:baseline; }
+  header h1 { margin:0; font-size:20px; } header span { color:var(--dim); font-size:14px; }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:24px; padding:24px; max-width:1100px; margin:auto; }
+  @media (max-width:800px) { main { grid-template-columns:1fr; } }
+  section { background:var(--card); border-radius:14px; padding:18px; }
+  h2 { margin:0 0 12px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  #log { height:340px; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+  .msg { padding:10px 14px; border-radius:14px; max-width:88%; }
+  .you { align-self:flex-end; background:#254a6e; }
+  .alexa { align-self:flex-start; background:#1c3a4a; border:1px solid var(--accent); }
+  .tool { align-self:flex-start; font:12px ui-monospace,monospace; color:var(--dim); }
+  form { display:flex; gap:8px; margin-top:12px; }
+  input { flex:1; padding:10px 12px; border-radius:10px; border:1px solid #2c4162; background:#0f1b2d; color:var(--ink); font:inherit; }
+  button { padding:10px 14px; border:0; border-radius:10px; background:var(--accent); color:#04222a; font-weight:600; cursor:pointer; }
+  button.mic.on { background:var(--bad); color:#fff; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .chips button { background:#23344f; color:var(--ink); font-weight:400; font-size:13px; padding:6px 10px; }
+  .dose { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #23344f; }
+  .st { font-size:12px; padding:2px 8px; border-radius:99px; }
+  .taken { background:#1d4d36; color:var(--ok); } .missed { background:#5a2626; color:var(--bad); }
+  .due { background:#5a4720; color:var(--warn); } .upcoming,.skipped { background:#2a3a55; color:var(--dim); }
+  .concern { padding:8px 10px; margin-top:8px; border-left:3px solid var(--warn); background:#1c2d47; border-radius:6px; font-size:14px; }
+  .concern.high { border-color:var(--bad); }
+</style>
+</head>
+<body>
+<header><h1>CareLoop</h1><span>Simulated Alexa+ · talks to a real MCP server at /mcp</span></header>
+<main>
+  <section>
+    <h2>Alexa+ (simulated)</h2>
+    <div id="log"></div>
+    <form id="f"><input id="q" placeholder="Try: I gave mom her metformin" autocomplete="off">
+      <button class="mic" id="mic" type="button" title="Speak">🎤</button><button>Send</button></form>
+    <div class="chips" id="chips"></div>
+  </section>
+  <section>
+    <h2>Family dashboard (live)</h2>
+    <div id="doses"></div>
+    <h2 style="margin-top:18px">Concerns sent to family</h2>
+    <div id="concerns"></div>
+  </section>
+</main>
+<script>
+const log = document.getElementById("log"), q = document.getElementById("q");
+let rpcId = 0;
+
+// Minimal MCP client over Streamable HTTP (stateless JSON responses).
+async function mcp(method, params) {
+  const r = await fetch("/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message);
+  return j.result;
+}
+const callTool = (name, args = {}) => mcp("tools/call", { name, arguments: args });
+
+// Tiny intent router standing in for Alexa+'s own language understanding.
+function route(u) {
+  const s = u.toLowerCase();
+  const med = (s.match(/metformin|lisinopril|vitamin d?/) || [])[0];
+  if (/(gave|took|taken|had).*(pill|medic|dose)|\b(gave|took|taken)\b/.test(s) && med)
+    return ["log_medication", { medication: med.trim(), taken: !/skip|didn'?t|not/.test(s) }];
+  if (/skip|refus/.test(s) && med) return ["log_medication", { medication: med.trim(), taken: false }];
+  if (/miss/.test(s)) return ["get_missed_doses"];
+  if (/schedule|when|what.*(pill|medic)/.test(s)) return ["get_care_schedule"];
+  if (/summary|digest|how (is|was)|update/.test(s)) return ["daily_summary"];
+  const mood = s.match(/mood (?:is |of )?([1-5])|feeling (\w+)/);
+  if (mood) {
+    const words = { terrible:1, awful:1, bad:2, low:2, okay:3, fine:3, good:4, great:5, happy:5 };
+    const n = mood[1] ? +mood[1] : words[mood[2]];
+    if (n) return ["record_checkin", { mood: n, note: u }];
+  }
+  if (/worr|concern|fell|fall|dizzy|pain|confus|alert/.test(s)) return ["flag_concern", { message: u, severity: /fell|fall|pain|confus/.test(s) ? "high" : "medium" }];
+  return null;
+}
+
+function add(cls, t) {
+  const d = document.createElement("div"); d.className = "msg " + cls; d.textContent = t;
+  if (cls === "tool") d.className = "tool";
+  log.append(d); log.scrollTop = log.scrollHeight;
+}
+function speak(t) {
+  try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(t)); } catch {}
+}
+
+async function say(u) {
+  if (!u.trim()) return;
+  add("you", u);
+  const r = route(u);
+  if (!r) { const t = "Sorry, I can help with medications, check-ins, and concerns for Asha."; add("alexa", t); speak(t); return; }
+  add("tool", `→ MCP tools/call ${r[0]} ${JSON.stringify(r[1] ?? {})}`);
+  try {
+    const res = await callTool(r[0], r[1]);
+    const t = res.content[0].text; add("alexa", t); speak(t);
+  } catch (e) { add("alexa", "Something went wrong: " + e.message); }
+  refresh();
+}
+
+async function refresh() {
+  const s = await (await fetch("/api/state")).json();
+  document.getElementById("doses").innerHTML = s.doses.map(d =>
+    `<div class="dose"><span>${d.time} · ${d.name} ${d.dose}</span><span class="st ${d.status}">${d.status}</span></div>`).join("");
+  document.getElementById("concerns").innerHTML = s.concerns.length
+    ? s.concerns.map(c => `<div class="concern ${c.severity}"><b>${c.severity}</b> · ${c.message}<br><small>notified ${c.notified.join(", ")}</small></div>`).join("")
+    : '<small style="color:var(--dim)">None yet</small>';
+}
+
+document.getElementById("f").onsubmit = e => { e.preventDefault(); const v = q.value; q.value = ""; say(v); };
+["I gave mom her metformin", "Which doses were missed?", "Her mood is 2 today", "She felt dizzy this morning", "Give me the daily summary"]
+  .forEach(t => { const b = document.createElement("button"); b.type = "button"; b.textContent = t; b.onclick = () => say(t); document.getElementById("chips").append(b); });
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition, mic = document.getElementById("mic");
+if (SR) {
+  const rec = new SR(); rec.lang = "en-US";
+  rec.onresult = e => say(e.results[0][0].transcript);
+  rec.onend = () => mic.classList.remove("on");
+  mic.onclick = () => { mic.classList.add("on"); rec.start(); };
+} else mic.style.display = "none";
+
+add("alexa", "Hi, I'm your CareLoop helper. Ask about Asha's medications, log a dose, or check in.");
+refresh(); setInterval(refresh, 4000);
+</script>
+</body>
+</html>

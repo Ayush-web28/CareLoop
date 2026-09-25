@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: CareLoop - Alexa+ caretaking MCP server (Lambda Function URL + DynamoDB + Bedrock)
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: ""
+    Description: Bedrock Converse model or inference profile ID for daily digests. Empty uses the template digest.
+  Timezone:
+    Type: String
+    Default: America/Los_Angeles
+    Description: IANA timezone used to judge medication times.
+
+Conditions:
+  UseBedrock: !Not [!Equals [!Ref BedrockModelId, ""]]
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Handler: lambda.handler
+      CodeUri: ../dist/
+      MemorySize: 512
+      Timeout: 30
+      Environment:
+        Variables:
+          CARELOOP_TABLE: !Ref Table
+          CARELOOP_TZ: !Ref Timezone
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - !If
+          - UseBedrock
+          - Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:Converse]
+                Resource: "*"
+          - !Ref AWS::NoValue
+      FunctionUrlConfig:
+        AuthType: NONE
+
+Outputs:
+  BaseUrl:
+    Value: !GetAtt FunctionUrl.Url
+    Description: Open in a browser for the simulated Alexa+ demo
+  McpEndpoint:
+    Value: !Sub "${FunctionUrl.Url}mcp"
+    Description: Streamable HTTP MCP endpoint
