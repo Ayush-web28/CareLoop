@@ -7,6 +7,8 @@
 <style>
   :root { --bg:#0f1b2d; --card:#17263d; --ink:#e8eef7; --dim:#8ea3c0; --accent:#3ec6e0; --ok:#4cd68a; --warn:#f5b84b; --bad:#ef6b6b; }
   * { box-sizing:border-box; }
+  html { color-scheme:dark; }
+  #log { scrollbar-width:thin; scrollbar-color:#3a5275 transparent; }
   body { margin:0; font:16px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--ink); }
   header { padding:16px 24px; border-bottom:1px solid #23344f; display:flex; gap:12px; align-items:baseline; }
   header h1 { margin:0; font-size:20px; } header span { color:var(--dim); font-size:14px; }
@@ -25,6 +27,8 @@
   button.mic.on { background:var(--bad); color:#fff; }
   .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
   .chips button { background:#23344f; color:var(--ink); font-weight:400; font-size:13px; padding:6px 10px; }
+  .person + .person { margin-top:20px; }
+  .person h3 { margin:0 0 4px; font-size:16px; } .person h3 small { color:var(--dim); font-weight:400; }
   .dose { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #23344f; }
   .st { font-size:12px; padding:2px 8px; border-radius:99px; }
   .taken { background:#1d4d36; color:var(--ok); } .missed { background:#5a2626; color:var(--bad); }
@@ -39,15 +43,13 @@
   <section>
     <h2>Alexa+ (simulated)</h2>
     <div id="log"></div>
-    <form id="f"><input id="q" placeholder="Try: I gave mom her metformin" autocomplete="off">
+    <form id="f"><input id="q" placeholder="Try: Dad took his amlodipine" autocomplete="off">
       <button class="mic" id="mic" type="button" title="Speak">🎤</button><button>Send</button></form>
     <div class="chips" id="chips"></div>
   </section>
   <section>
     <h2>Family dashboard (live)</h2>
-    <div id="doses"></div>
-    <h2 style="margin-top:18px">Concerns sent to family</h2>
-    <div id="concerns"></div>
+    <div id="people"></div>
   </section>
 </main>
 <script>
@@ -67,23 +69,31 @@ async function mcp(method, params) {
 }
 const callTool = (name, args = {}) => mcp("tools/call", { name, arguments: args });
 
+// Who and what the assistant knows about, learned from the server (/api/state).
+let people = [];
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const has = (s, w) => new RegExp("\\b" + w + "\\b").test(s);
+
 // Tiny intent router standing in for Alexa+'s own language understanding.
 function route(u) {
   const s = u.toLowerCase();
-  const med = (s.match(/metformin|lisinopril|vitamin d?/) || [])[0];
-  if (/(gave|took|taken|had).*(pill|medic|dose)|\b(gave|took|taken)\b/.test(s) && med)
-    return ["log_medication", { medication: med.trim(), taken: !/skip|didn'?t|not/.test(s) }];
-  if (/skip|refus/.test(s) && med) return ["log_medication", { medication: med.trim(), taken: false }];
-  if (/miss/.test(s)) return ["get_missed_doses"];
-  if (/schedule|when|what.*(pill|medic)/.test(s)) return ["get_care_schedule"];
-  if (/summary|digest|how (is|was)|update/.test(s)) return ["daily_summary"];
+  const who = people.find(p => p.aliases.some(a => has(s, a)));
+  const person = who ? { person: who.name } : {};
+  const med = people.flatMap(p => p.medications).map(m => m.toLowerCase().split(" ")[0]).find(m => s.includes(m));
+  if (med && /skip|refus|didn'?t|not take/.test(s)) return ["log_medication", { medication: med, taken: false, ...person }];
+  if (med && /gave|give|took|taken|had|given/.test(s)) return ["log_medication", { medication: med, ...person }];
+  if (/who.*(look|care)|care circle/.test(s)) return ["list_people"];
+  if (/miss/.test(s)) return ["get_missed_doses", person];
+  if (/schedule|when|what.*(pill|medic)/.test(s)) return ["get_care_schedule", person];
+  if (/summary|digest|how (is|are|was|were)|update/.test(s)) return ["daily_summary", person];
   const mood = s.match(/mood (?:is |of )?([1-5])|feeling (\w+)/);
   if (mood) {
     const words = { terrible:1, awful:1, bad:2, low:2, okay:3, fine:3, good:4, great:5, happy:5 };
     const n = mood[1] ? +mood[1] : words[mood[2]];
-    if (n) return ["record_checkin", { mood: n, note: u }];
+    if (n) return ["record_checkin", { mood: n, note: u, ...person }];
   }
-  if (/worr|concern|fell|fall|dizzy|pain|confus|alert/.test(s)) return ["flag_concern", { message: u, severity: /fell|fall|pain|confus/.test(s) ? "high" : "medium" }];
+  if (/worr|concern|fell|fall|dizzy|pain|confus|alert/.test(s))
+    return ["flag_concern", { message: u, severity: /fell|fall|pain|confus/.test(s) ? "high" : "medium", ...person }];
   return null;
 }
 
@@ -100,7 +110,7 @@ async function say(u) {
   if (!u.trim()) return;
   add("you", u);
   const r = route(u);
-  if (!r) { const t = "Sorry, I can help with medications, check-ins, and concerns for Asha."; add("alexa", t); speak(t); return; }
+  if (!r) { const t = "Sorry, I can help with medications, check-ins, and concerns for " + (people.map(p => p.name).join(" and ") || "your family") + "."; add("alexa", t); speak(t); return; }
   add("tool", `→ MCP tools/call ${r[0]} ${JSON.stringify(r[1] ?? {})}`);
   try {
     const res = await callTool(r[0], r[1]);
@@ -110,16 +120,17 @@ async function say(u) {
 }
 
 async function refresh() {
-  const s = await (await fetch("/api/state")).json();
-  document.getElementById("doses").innerHTML = s.doses.map(d =>
-    `<div class="dose"><span>${d.time} · ${d.name} ${d.dose}</span><span class="st ${d.status}">${d.status}</span></div>`).join("");
-  document.getElementById("concerns").innerHTML = s.concerns.length
-    ? s.concerns.map(c => `<div class="concern ${c.severity}"><b>${c.severity}</b> · ${c.message}<br><small>notified ${c.notified.join(", ")}</small></div>`).join("")
-    : '<small style="color:var(--dim)">None yet</small>';
+  people = (await (await fetch("/api/state")).json()).people;
+  document.getElementById("people").innerHTML = people.map(p => `
+    <div class="person">
+      <h3>${esc(p.name)} <small>${esc(p.relation)}</small></h3>
+      ${p.doses.map(d => `<div class="dose"><span>${d.time} · ${esc(d.name)} ${esc(d.dose)}</span><span class="st ${d.status}">${d.status}</span></div>`).join("")}
+      ${p.concerns.map(c => `<div class="concern ${c.severity}"><b>${c.severity}</b> · ${esc(c.message)}<br><small>notified ${esc(c.notified.join(", "))}</small></div>`).join("")}
+    </div>`).join("");
 }
 
 document.getElementById("f").onsubmit = e => { e.preventDefault(); const v = q.value; q.value = ""; say(v); };
-["I gave mom her metformin", "Which doses were missed?", "Her mood is 2 today", "She felt dizzy this morning", "Give me the daily summary"]
+["I gave mom her metformin", "Dad took his amlodipine", "Which doses were missed?", "Mom's mood is 2 today", "Dad felt dizzy this morning", "Give me the daily summary"]
   .forEach(t => { const b = document.createElement("button"); b.type = "button"; b.textContent = t; b.onclick = () => say(t); document.getElementById("chips").append(b); });
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition, mic = document.getElementById("mic");
@@ -130,7 +141,7 @@ if (SR) {
   mic.onclick = () => { mic.classList.add("on"); rec.start(); };
 } else mic.style.display = "none";
 
-add("alexa", "Hi, I'm your CareLoop helper. Ask about Asha's medications, log a dose, or check in.");
+add("alexa", "Hi, I'm your CareLoop helper. Ask about your parents' medications, log a dose, or check in.");
 refresh(); setInterval(refresh, 4000);
 </script>
 </body>

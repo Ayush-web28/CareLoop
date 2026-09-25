@@ -1,7 +1,7 @@
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "./mcp.js";
-import { load, todaysDoses } from "./store.js";
+import { dashboardState, load } from "./store.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -40,12 +40,7 @@ app.delete("/mcp", methodNotAllowed);
 // Read-only state for the demo dashboard.
 app.get("/api/state", async (_req, res) => {
   const db = await load();
-  res.json({
-    person: db.person,
-    doses: todaysDoses(db),
-    checkins: db.checkins.slice(-5).reverse(),
-    concerns: db.concerns.slice(-5).reverse(),
-  });
+  res.json(dashboardState(db));
 });
 
 if (process.env.NODE_ENV !== "test") {

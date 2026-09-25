@@ -1,7 +1,7 @@
 # CareLoop
 
 An Alexa+ caretaking assistant built as a **self-hosted MCP server** (Streamable HTTP, spec 2025-11-25+).
-A family member can tell Alexa+ "I gave Mom her metformin" or "she felt dizzy this morning"; CareLoop logs it,
+A family member can tell Alexa+ "I gave Mom her metformin" or "Dad felt dizzy this morning"; CareLoop logs it,
 flags concerns to other caregivers, and writes a plain-language daily digest.
 
 Built for the Amazon Developer Hackathon: Alexa+ track (simulated Alexa+ experience backed by a real MCP server) and the Open Source challenge.
@@ -9,14 +9,20 @@ The AWS deployment below is optional; everything runs locally without an AWS acc
 
 ## MCP tools
 
+The care circle holds several people (seeded with Asha, mother, and Ravi, father), each with their own medications,
+check-ins, concerns and caregivers. Tools take an optional `person` ("mom", "dad", a name). When it is omitted, read-only
+tools cover everyone, `log_medication` infers the person from a medication that belongs to only one of them, and
+`record_checkin` / `flag_concern` ask "Whom do you mean?".
+
 | Tool | What it does |
 | --- | --- |
+| `list_people` | Who is in the care circle |
 | `get_care_schedule` | Today's doses and their status |
-| `log_medication` | Mark a dose taken/skipped (picks the nearest open slot) |
+| `log_medication` | Mark a dose taken/skipped (catches up the earliest overdue dose first) |
 | `get_missed_doses` | Doses past the 60-minute grace window with nothing logged |
-| `record_checkin` | Mood 1-5; low moods auto-notify caregivers |
+| `record_checkin` | Mood 1-5; low moods auto-notify that person's caregivers |
 | `flag_concern` | Raise a concern and notify caregivers |
-| `daily_summary` | Family digest, written by Amazon Bedrock when configured |
+| `daily_summary` | Family digest per person, written by Amazon Bedrock when configured |
 
 ## Run
 

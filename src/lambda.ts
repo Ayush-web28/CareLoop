@@ -2,7 +2,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
 import indexHtml from "../public/index.html";
 import { createServer } from "./mcp.js";
-import { load, todaysDoses } from "./store.js";
+import { dashboardState, load } from "./store.js";
 
 const json = (status: number, body: unknown): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -48,12 +48,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (method === "GET" && path === "/api/state") {
       const db = await load();
-      return json(200, {
-        person: db.person,
-        doses: todaysDoses(db),
-        checkins: db.checkins.slice(-5).reverse(),
-        concerns: db.concerns.slice(-5).reverse(),
-      });
+      return json(200, dashboardState(db));
     }
     if (method === "GET" && path === "/") {
       return { statusCode: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: indexHtml };

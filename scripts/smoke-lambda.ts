@@ -21,13 +21,13 @@ assert.ok(r.body.includes("CareLoop"));
 
 r = await handler(rpc(1, "tools/list"));
 assert.equal(r.statusCode, 200);
-assert.equal(JSON.parse(r.body).result.tools.length, 6);
+assert.equal(JSON.parse(r.body).result.tools.length, 7);
 
 r = await handler(rpc(2, "tools/call", { name: "log_medication", arguments: { medication: "vitamin" } }));
 assert.ok(JSON.parse(r.body).result.content[0].text.includes("Vitamin D"));
 
 r = await handler(ev("GET", "/api/state"));
-assert.ok(JSON.parse(r.body).doses.some((d: { name: string; status: string }) => d.name === "Vitamin D" && d.status === "taken"));
+assert.ok(JSON.parse(r.body).people[0].doses.some((d: { name: string; status: string }) => d.name === "Vitamin D" && d.status === "taken"));
 
 assert.equal((await handler(ev("GET", "/mcp"))).statusCode, 405);
 assert.equal((await handler(ev("GET", "/nope"))).statusCode, 404);
